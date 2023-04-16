@@ -428,22 +428,21 @@ pid_t syscall_fork() {
     ptable[child].pagetable = kalloc_pagetable();
 
     for(vmiter it(current->pagetable);
-        it.va() < MEMSIZE_VIRTUAL;
-        it+= PAGESIZE) {
-
-            if(it.present()){
-                if(it.va() < PROC_START_ADDR){
-                    vmiter(ptable[child].pagetable, it.va()).map(it.kptr(), it.perm());
-                }
-                else if (it.user()){
-                    void* pa = kalloc(PAGESIZE);
-                    if(pa){
-                        memcpy(pa, (void*)it.kptr(), PAGESIZE);
-                        vmiter(ptable[child].pagetable, it.va()).map(pa, it.perm());
-                    }
+         it.va() < MEMSIZE_VIRTUAL; 
+         it+= PAGESIZE) {
+        if(it.present()){
+            if(it.va() < PROC_START_ADDR){
+                vmiter(ptable[child].pagetable, it.va()).map(it.kptr(), it.perm());
+            }
+            else if (it.user()){
+                void* pa = kalloc(PAGESIZE);
+                if(pa){
+                    memcpy(pa, (void*)it.kptr(), PAGESIZE);
+                    vmiter(ptable[child].pagetable, it.va()).map(pa, it.perm());
                 }
             }
         }
+    }
     
     ptable[child].regs = current->regs;
     ptable[child].regs.reg_rax = 0;
