@@ -141,8 +141,21 @@ void* kalloc(size_t sz) {
 //    If `kptr == nullptr` does nothing.
 
 void kfree(void* kptr) {
-    (void) kptr;
-    assert(false /* your code here */);
+    if (kptr == nullptr) {
+        return;
+    }
+
+    uintptr_t pa = (uintptr_t) kptr;
+
+    if (pa % PAGESIZE != 0 || pa >= MEMSIZE_PHYSICAL) {
+        return;
+    }
+
+    size_t index = pa / PAGESIZE;
+
+    if (physpages[index].refcount > 0) {
+        --physpages[index].refcount;
+    }
 }
 
 
@@ -306,6 +319,7 @@ void exception(regstate* regs) {
 
 int syscall_page_alloc(uintptr_t addr);
 pid_t syscall_fork();
+static void syscall_exit(proc* p);
 
 uintptr_t syscall(regstate* regs) {
     // Copy the saved registers into the `current` process descriptor.
@@ -346,6 +360,10 @@ uintptr_t syscall(regstate* regs) {
     case SYSCALL_FORK:
         return syscall_fork();
 
+    case SYSCALL_EXIT:
+        syscall_exit(current);
+        schedule();
+
     default:
         panic("Unexpected system call %ld!\n", regs->reg_rax);
 
@@ -370,6 +388,26 @@ int syscall_page_alloc(uintptr_t addr) {
     else{
         return -1;
     }
+}
+
+static void syscall_exit(proc* p) {
+    if (p->pagetable == nullptr) {
+        return;
+    }
+
+    for (vmiter it(p->pagetable); it.va() < MEMSIZE_VIRTUAL; it += PAGESIZE) {
+        if (it.va() >= PROC_START_ADDR && it.present()) {
+            kfree((void*)it.pa());
+        }
+    }
+
+    for (ptiter it(p->pagetable); !it.done(); it.next()) {
+        kfree(it.kptr());
+    }
+    
+    kfree(p->pagetable);
+    p->pagetable = nullptr;
+    p->state = P_FREE;
 }
 
 pid_t syscall_fork() {
