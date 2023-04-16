@@ -305,6 +305,7 @@ void exception(regstate* regs) {
 //    Note that hardware interrupts are disabled when the kernel is running.
 
 int syscall_page_alloc(uintptr_t addr);
+pid_t syscall_fork();
 
 uintptr_t syscall(regstate* regs) {
     // Copy the saved registers into the `current` process descriptor.
@@ -342,6 +343,9 @@ uintptr_t syscall(regstate* regs) {
             return syscall_page_alloc(current->regs.reg_rdi);
         } else { return -1;}
 
+    case SYSCALL_FORK:
+        return syscall_fork();
+
     default:
         panic("Unexpected system call %ld!\n", regs->reg_rax);
 
@@ -366,6 +370,46 @@ int syscall_page_alloc(uintptr_t addr) {
     else{
         return -1;
     }
+}
+
+pid_t syscall_fork() {
+    pid_t child = -1;
+
+    for (int i = 1; i < NPROC; i++) {
+        if (ptable[i].state == P_FREE) {
+            child = i;
+            break;
+        }
+    }
+
+    if (child < 1) {
+        return -1;
+    }
+
+    ptable[child].state = P_RUNNABLE;
+    ptable[child].pagetable = kalloc_pagetable();
+
+    for(vmiter it(current->pagetable);
+        it.va() < MEMSIZE_VIRTUAL;
+        it+= PAGESIZE) {
+
+            if(it.present()){
+                if(it.va() < PROC_START_ADDR){
+                    vmiter(ptable[child].pagetable, it.va()).map(it.kptr(), it.perm());
+                }
+                else if (it.user()){
+                    void* pa = kalloc(PAGESIZE);
+                    if(pa){
+                        memcpy(pa, (void*)it.kptr(), PAGESIZE);
+                        vmiter(ptable[child].pagetable, it.va()).map(pa, it.perm());
+                    }
+                }
+            }
+        }
+    
+    ptable[child].regs = current->regs;
+    ptable[child].regs.reg_rax = 0;
+    return child;
 }
 
 
