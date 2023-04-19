@@ -381,7 +381,11 @@ uintptr_t syscall(regstate* regs) {
 int syscall_page_alloc(uintptr_t addr) {
     void* pa = kalloc(PAGESIZE);
     if(pa){
-        vmiter(current->pagetable, addr).map(pa, PTE_PWU);
+        int x = vmiter(current->pagetable, addr).try_map(pa, PTE_PWU);
+        if(x == -1){
+            syscall_exit(current);
+            return -1;
+        }
         memset(pa, 0, PAGESIZE);
         return 0;
     }
@@ -425,20 +429,36 @@ pid_t syscall_fork() {
     }
 
     ptable[child].state = P_RUNNABLE;
-    ptable[child].pagetable = kalloc_pagetable();
+    x86_64_pagetable* pt = kalloc_pagetable();
+    if(!pt){
+        return -1;
+    }
+    ptable[child].pagetable = pt;
 
     for(vmiter it(current->pagetable);
          it.va() < MEMSIZE_VIRTUAL; 
          it+= PAGESIZE) {
         if(it.present()){
             if(it.va() < PROC_START_ADDR){
-                vmiter(ptable[child].pagetable, it.va()).map(it.kptr(), it.perm());
+                int x = vmiter(ptable[child].pagetable, it.va()).try_map(it.kptr(), it.perm());
+                if(x < 0){
+                    syscall_exit(&ptable[child]);
+                    return -1;
+                }
             }
             else if (it.user()){
                 void* pa = kalloc(PAGESIZE);
                 if(pa){
                     memcpy(pa, (void*)it.kptr(), PAGESIZE);
-                    vmiter(ptable[child].pagetable, it.va()).map(pa, it.perm());
+                    int x = vmiter(ptable[child].pagetable, it.va()).try_map(pa, it.perm());
+                    if(x < 0){
+                        syscall_exit(&ptable[child]);
+                        return -1;
+                    }
+                }
+                else{
+                    syscall_exit(&ptable[child]);
+                    return -1;
                 }
             }
         }
